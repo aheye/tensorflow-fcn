@@ -35,7 +35,7 @@ class FCN8VGG:
         print("npy file loaded")
 
     def build(self, rgb, train=False, num_classes=20, random_init_fc8=False,
-              debug=False):
+              debug=False, use_dilated=False):
         """
         Build the VGG model using loaded weights
         Parameters
@@ -87,12 +87,29 @@ class FCN8VGG:
         self.conv4_1 = self._conv_layer(self.pool3, "conv4_1")
         self.conv4_2 = self._conv_layer(self.conv4_1, "conv4_2")
         self.conv4_3 = self._conv_layer(self.conv4_2, "conv4_3")
-        self.pool4 = self._max_pool(self.conv4_3, 'pool4', debug)
+
+        if use_dilated:
+            pad = [[0, 0], [0, 0]]
+            self.pool4 = tf.nn.max_pool(self.conv4_3, ksize=[1, 2, 2, 1],
+                                        strides=[1, 1, 1, 1],
+                                        padding='SAME', name='pool4')
+            self.pool4 = tf.space_to_batch(self.pool4,
+                                           paddings=pad, block_size=2)
+        else:
+            self.pool4 = self._max_pool(self.conv4_3, 'pool4', debug)
 
         self.conv5_1 = self._conv_layer(self.pool4, "conv5_1")
         self.conv5_2 = self._conv_layer(self.conv5_1, "conv5_2")
         self.conv5_3 = self._conv_layer(self.conv5_2, "conv5_3")
-        self.pool5 = self._max_pool(self.conv5_3, 'pool5', debug)
+        if use_dilated:
+            pad = [[0, 0], [0, 0]]
+            self.pool5 = tf.nn.max_pool(self.conv5_3, ksize=[1, 2, 2, 1],
+                                        strides=[1, 1, 1, 1],
+                                        padding='SAME', name='pool5')
+            self.pool5 = tf.space_to_batch(self.pool5,
+                                           paddings=pad, block_size=2)
+        else:
+            self.pool5 = self._max_pool(self.conv5_3, 'pool5', debug)
 
         self.fc6 = self._fc_layer(self.pool5, "fc6")
 
@@ -102,6 +119,13 @@ class FCN8VGG:
         self.fc7 = self._fc_layer(self.fc6, "fc7")
         if train:
             self.fc7 = tf.nn.dropout(self.fc7, 0.5)
+
+        if use_dilated:
+            self.pool5 = tf.batch_to_space(self.pool5, crops=pad, block_size=2)
+            self.pool5 = tf.batch_to_space(self.pool5, crops=pad, block_size=2)
+            self.fc7 = tf.batch_to_space(self.fc7, crops=pad, block_size=2)
+            self.fc7 = tf.batch_to_space(self.fc7, crops=pad, block_size=2)
+            return
 
         if random_init_fc8:
             self.score_fr = self._score_layer(self.fc7, "score_fr",
@@ -259,12 +283,12 @@ class FCN8VGG:
 
     def get_deconv_filter(self, f_shape):
         width = f_shape[0]
-        heigh = f_shape[0]
+        height = f_shape[1]
         f = ceil(width/2.0)
         c = (2 * f - 1 - f % 2) / (2.0 * f)
         bilinear = np.zeros([f_shape[0], f_shape[1]])
         for x in range(width):
-            for y in range(heigh):
+            for y in range(height):
                 value = (1 - abs(x / f - c)) * (1 - abs(y / f - c))
                 bilinear[x, y] = value
         weights = np.zeros(f_shape)
